@@ -69,6 +69,7 @@ struct ReadSdcCmd : public Frontend {
         }
     }
 };
+//Edited by Leadsoc
 
 struct GetPortsCmd : public Pass {
     GetPortsCmd() : Pass("get_ports", "Get top-level ports from the design") {}
@@ -96,31 +97,56 @@ struct GetPortsCmd : public Pass {
         // If a single port name is provided
         if (args.size() == 2) {
             std::string port_to_check = args[1];
-            bool found = false;
+            bool found_any_match = false;
+
+            // Check if there is a '*' in the port_to_check
+            size_t wildcard_pos = port_to_check.find('*');
+            bool is_wildcard = (wildcard_pos != std::string::npos);
+            std::string prefix = port_to_check;
+
+            // If it's a wildcard, remove the '*' to get the prefix
+            if (is_wildcard) {
+                prefix = port_to_check.substr(0, wildcard_pos); // Get the prefix before '*'
+            }
 
             for (auto &it : top->wires_) {
                 RTLIL::Wire *wire = it.second;
                 if (!wire->port_id)
                     continue;
                 std::string port_name = RTLIL::id2cstr(wire->name);
-                if (port_name == port_to_check) {
-		    //std::string full_path = "%top/" + port_name;
-                    Tcl_Obj *name_obj = Tcl_NewStringObj(port_name.c_str(), -1);
-                    log("%s\n", port_name.c_str()); // Print to Yosys log
-                    Tcl_SetObjResult(interp, name_obj);
-                    found = true;
-                    break;
+
+                // If there's a wildcard, check if port_name starts with the prefix
+                if (is_wildcard) {
+                    // Match any port name starting with the prefix
+                    if (port_name.find(prefix) == 0) {
+                        Tcl_Obj *name_obj = Tcl_NewStringObj(port_name.c_str(), -1);
+                        log("%s\n", port_name.c_str()); // Print to Yosys log
+                        Tcl_ListObjAppendElement(interp, tcl_list, name_obj);
+                        found_any_match = true;
+                    }
+                } else {
+                    // Exact match
+                    if (port_name == port_to_check) {
+                        Tcl_Obj *name_obj = Tcl_NewStringObj(port_name.c_str(), -1);
+                        log("%s\n", port_name.c_str()); // Print to Yosys log
+                        Tcl_SetObjResult(interp, name_obj);
+                        found_any_match = true;
+                        break;
+                    }
                 }
             }
 
-            if (!found) {
-                log("Error:: port %s not exist\n", port_to_check.c_str()); // if not found
+            // If no ports were found, return error
+            if (!found_any_match) {
+                log("Error:: No matching ports found for '%s'\n", port_to_check.c_str());
                 Tcl_SetObjResult(interp, Tcl_NewStringObj("", -1));
+            //} else {
+            //    Tcl_SetObjResult(interp, tcl_list);  // Return the list of matching ports
             }
         }
         // No port name specified, return all top-level ports
         else if (args.size() == 1) {
-	    bool found_any_port = false;
+            bool found_any_port = false;
             for (auto &it : top->wires_) {
                 RTLIL::Wire *wire = it.second;
                 if (!wire->port_id)
@@ -128,12 +154,12 @@ struct GetPortsCmd : public Pass {
                 std::string port_name = RTLIL::id2cstr(wire->name);
                 Tcl_Obj *name_obj = Tcl_NewStringObj(port_name.c_str(), -1);
                 Tcl_ListObjAppendElement(interp, tcl_list, name_obj);
-		found_any_port = true;
+                found_any_port = true;
             }
-	    if (!found_any_port) {
-	        log("Error:: No ports found for 'get_ports'\n");  // Error message if no ports were found
+            if (!found_any_port) {
+                log("Error:: No ports found for 'get_ports'\n");  // Error message if no ports were found
                 Tcl_SetObjResult(interp, Tcl_NewStringObj("", -1));
-	    }
+            }
 
             // Print each port to Yosys log
             int list_len;
@@ -152,7 +178,8 @@ struct GetPortsCmd : public Pass {
     }
 };
 
-//get_ports end
+
+//get_ports end 
 
 struct WriteSdcCmd : public Backend {
     WriteSdcCmd(SdcWriter &sdc_writer) : Backend("sdc", "Write SDC file"), sdc_writer_(sdc_writer) {}
@@ -298,25 +325,31 @@ struct CreateClockCmd : public Pass {
         std::transform(selection_begin, args.end(), selection_begin, [](std::string &w) { return "w:" + w; });
     }
 };
-
-#include <map>
-
 struct GetClocksCmd : public Pass {
     GetClocksCmd() : Pass("get_clocks", "Create clock object") {}
 
-    // Static map to track logical names for clocks
-    static std::map<std::string, std::string> logical_to_wire_map;
-
-    void help() override {
+    void help() override
+    {
         log("\n");
         log("    get_clocks [-include_generated_clocks] [-of <nets>] "
             "[<patterns>]\n");
         log("\n");
         log("Returns all clocks in the design.\n");
         log("\n");
+        log("    -include_generated_clocks\n");
+        log("        Include auto-generated clocks.\n");
+        log("\n");
+        log("    -of\n");
+        log("        Get clocks of these nets.\n");
+        log("\n");
+        log("    <pattern>\n");
+        log("        Pattern of clock names. Default are all clocks in the "
+            "design.\n");
+        log("\n");
     }
 
-    std::vector<std::string> extract_list(const std::string &args) {
+    std::vector<std::string> extract_list(const std::string &args)
+    {
         std::vector<std::string> port_list;
         std::stringstream ss(args);
         std::istream_iterator<std::string> begin(ss);
@@ -325,7 +358,8 @@ struct GetClocksCmd : public Pass {
         return port_list;
     }
 
-    void execute(std::vector<std::string> args, RTLIL::Design *design) override {
+    void execute(std::vector<std::string> args, RTLIL::Design *design) override
+    {
         // Ensure design is loaded
         if (!design) {
             log_cmd_error("No design loaded.\n");
@@ -346,6 +380,11 @@ struct GetClocksCmd : public Pass {
             }
             if (arg == "-of" && argidx + 1 < args.size()) {
                 clocks_nets = extract_list(args[++argidx]);
+#ifdef SDC_DEBUG
+                for (auto clock_net : clocks_nets) {
+                    log("Clock filter %s\n", clock_net.c_str());
+                }
+#endif
                 continue;
             }
             if (arg.size() > 0 && arg[0] == '-') {
@@ -359,6 +398,10 @@ struct GetClocksCmd : public Pass {
 
         // Fetch clocks in the design
         std::map<std::string, RTLIL::Wire *> clocks = Clocks::GetClocks(design);
+	//log("Clocks retrieved from design: %d\n", clocks.size());
+        //for (const auto &clock : clocks) {
+        //    log("Clock name: %s\n", clock.first.c_str());
+        //}
 
         // Ensure clocks are retrieved properly
         if (clocks.size() == 0) {
@@ -372,56 +415,51 @@ struct GetClocksCmd : public Pass {
             return;
         }
 
-        Tcl_Obj *tcl_list = Tcl_NewListObj(0, NULL);
-
-        // Iterate over the clock wires in the design and find their logical names
+	Tcl_Obj *tcl_list = Tcl_NewListObj(0, NULL);
         for (auto &clock : clocks) {
-            auto &wire = clock.second;
-
-            // Dynamically get the wire name (PCLK_i, PCLK_o etc.)
-            const std::string wire_name = RTLIL::id2cstr(wire->name);
-
-            // Now, we look up the logical name from the static map
-            if (logical_to_wire_map.find(wire_name) != logical_to_wire_map.end()) {
-                // The wire name exists, we should return the logical name
-                const std::string logical_name = logical_to_wire_map[wire_name];
-
-                // Add logical clock name to the Tcl list
-                Tcl_Obj *name_obj = Tcl_NewStringObj(logical_name.c_str(), -1);
-                Tcl_ListObjAppendElement(interp, tcl_list, name_obj);
+            // Skip propagated clocks (i.e. clock wires with the same parameters
+            // as the master clocks they originate from)
+            if (Clock::IsPropagated(clock.second)) {
+		//log("Skipping propagated clock: %s\n", clock.first.c_str());
+                continue;
             }
+            // Skip generated clocks if -include_generated_clocks is not specified
+            if (Clock::IsGenerated(clock.second) && !include_generated_clocks) {
+		//log("Skipping generated clock (not included): %s\n", clock.first.c_str());
+                continue;
+            }
+            // Check if clock name is in the list of design clocks
+            if (!clocks_list.empty() && std::find(clocks_list.begin(), clocks_list.end(), clock.first) == clocks_list.end()) {
+		//log("Skipping clock (not in clock list): %s\n", clock.first.c_str());
+                continue;
+            }
+            // Check if clock wire is in the -of list
+            if (!clocks_nets.empty() && std::find(clocks_nets.begin(), clocks_nets.end(), Clock::WireName(clock.second)) == clocks_nets.end()) {
+		//log("Skipping clock (not in clock nets): %s\n", clock.first.c_str());
+                continue;
+            }
+
+            auto &wire = clock.second;
+            const char *name = RTLIL::id2cstr(wire->name);
+            Tcl_Obj *name_obj = Tcl_NewStringObj(name, -1);
+            Tcl_ListObjAppendElement(interp, tcl_list, name_obj);
         }
 
-        // Set result in Tcl interpreter
         Tcl_SetObjResult(interp, tcl_list);
-
-        // Retrieve and log the result string (all clock names)
         Tcl_Obj *result = Tcl_GetObjResult(interp);
         const char *result_str = Tcl_GetString(result);
-
-        // Print each clock name line by line
-        std::stringstream ss(result_str);
+        //log("%s\n", result_str);
+	std::stringstream ss(result_str);
         std::string clock_name;
         while (ss >> clock_name) {
             log("%s\n", clock_name.c_str());
         }
 
-        // Ensure internal state is updated for shell interaction
         if (clocks.size() == 0) {
             log_warning("No clocks found in design after processing.\n");
         }
     }
-
-    // This function should be called when the create_clock command is issued
-    static void create_clock_with_name(const std::string &logical_name, const std::string &wire_name) {
-        // Store the mapping of logical name to wire name
-        logical_to_wire_map[wire_name] = logical_name;
-    }
 };
-
-// Initialize static map
-std::map<std::string, std::string> GetClocksCmd::logical_to_wire_map;
-
 
 struct PropagateClocksCmd : public Pass {
     PropagateClocksCmd() : Pass("propagate_clocks", "Propagate clock information") {}
